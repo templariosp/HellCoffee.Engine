@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="HellCoffee.Demo/HellCoffee.Demo.csproj" />
+  <Project Path="HellCoffee.Engine/HellCoffee.Engine.csproj" />
+</Solution>
