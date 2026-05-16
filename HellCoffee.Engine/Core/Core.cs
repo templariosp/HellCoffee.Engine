@@ -55,8 +55,8 @@ public abstract class Core : Game
 
         Window.ClientSizeChanged += (_, _) => UpdateRenderDestination();
 
-        base.Initialize();
         OnInitialize();
+        base.Initialize(); // triggers LoadContent → OnLoadContent
     }
 
     protected override void LoadContent()

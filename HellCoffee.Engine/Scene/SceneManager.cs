@@ -9,10 +9,13 @@ public class SceneManager : IDisposable
 {
     private Scene _active;
     private Scene _next;
+    private Scene _overlay;
     private bool _fadingOut;
     private bool _fadingIn;
     private float _fadeAlpha;
     private const float FadeSpeed = 2.5f;
+
+    public bool HasOverlay => _overlay != null;
 
     // 1x1 pixel branco para o fade
     private Texture2D _fadeTexture;
@@ -43,6 +46,19 @@ public class SceneManager : IDisposable
         _fadeAlpha = 0f;
     }
 
+    public void PushOverlay(Scene overlay)
+    {
+        _overlay?.Dispose();
+        _overlay = overlay;
+        _overlay.Initialize(Core.Instance.Content);
+    }
+
+    public void PopOverlay()
+    {
+        _overlay?.Dispose();
+        _overlay = null;
+    }
+
     public void Update(GameTime gameTime)
     {
         float dt = (float)gameTime.ElapsedGameTime.TotalSeconds;
@@ -68,12 +84,16 @@ public class SceneManager : IDisposable
             }
         }
 
-        _active?.Update(gameTime);
+        if (_overlay != null)
+            _overlay.Update(gameTime);
+        else
+            _active?.Update(gameTime);
     }
 
     public void Draw(GameTime gameTime, SpriteBatch spriteBatch)
     {
         _active?.Draw(gameTime, spriteBatch);
+        _overlay?.Draw(gameTime, spriteBatch);
 
         if (_fadeAlpha > 0f && _fadeTexture != null)
         {
@@ -95,6 +115,7 @@ public class SceneManager : IDisposable
 
     public void Dispose()
     {
+        _overlay?.Dispose();
         _active?.Dispose();
         _fadeTexture?.Dispose();
     }

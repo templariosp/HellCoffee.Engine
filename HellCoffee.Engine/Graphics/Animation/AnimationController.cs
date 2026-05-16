@@ -17,6 +17,7 @@ public class AnimationController
     public string CurrentName { get; private set; } = string.Empty;
     public TextureRegion CurrentRegion { get; private set; }
     public bool IsFinished { get; private set; }
+    public int CurrentFrameIndex => _frameIndex;
 
     /// <summary>Evento chamado quando a animação troca de frame.</summary>
     public event Action<int> OnFrameChanged;
