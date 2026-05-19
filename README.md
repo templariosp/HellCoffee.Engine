@@ -15,6 +15,8 @@ A 2D game engine built on top of **MonoGame 3.8** (.NET 9.0), designed for retro
   - [Input System](#input-system)
   - [Audio System](#audio-system)
   - [Graphics System](#graphics-system)
+  - [Particle System](#particle-system)
+  - [UI System](#ui-system)
   - [Collision System](#collision-system)
   - [Game Management](#game-management)
   - [Debug System](#debug-system)
@@ -26,7 +28,7 @@ A 2D game engine built on top of **MonoGame 3.8** (.NET 9.0), designed for retro
 
 ## Overview
 
-HellCoffee.Engine is a framework that abstracts common game development patterns — scene management, input handling, audio, sprites, animation, camera, tilemaps, collision detection, and save systems — so you can focus on building your game.
+HellCoffee.Engine is a framework that abstracts common game development patterns — scene management, input handling, audio, sprites, animation, camera, tilemaps, collision detection, particles, UI, and save systems — so you can focus on building your game.
 
 Key design decisions:
 - **Virtual resolution** decoupled from window size for pixel-perfect scaling
@@ -72,12 +74,23 @@ HellCoffee.Engine/
 │   │   ├── Backgrounds/
 │   │   │   ├── BackgroundLayer.cs
 │   │   │   ├── SolidBackground.cs
-│   │   │   └── ParallaxBackground.cs
-│   │   └── Tilemap/
-│   │       ├── Tilemap.cs
-│   │       ├── TilemapLayer.cs
-│   │       ├── Tileset.cs
-│   │       └── Tile.cs
+│   │   │   ├── ParallaxBackground.cs
+│   │   │   └── TiledBackground.cs
+│   │   ├── Tilemap/
+│   │   │   ├── Tilemap.cs
+│   │   │   ├── TilemapLayer.cs
+│   │   │   ├── Tileset.cs
+│   │   │   └── Tile.cs
+│   │   └── Particles/
+│   │       ├── Particle.cs
+│   │       ├── ParticleEmitter.cs
+│   │       └── ParticleEmitterConfig.cs
+│   ├── UI/
+│   │   ├── UIElement.cs
+│   │   ├── UIPanel.cs
+│   │   ├── UILabel.cs
+│   │   ├── UIButton.cs
+│   │   └── UISlider.cs
 │   ├── Collision/
 │   │   ├── Shapes/
 │   │   │   ├── ICollisionShape.cs
@@ -97,6 +110,8 @@ HellCoffee.Engine/
 │   ├── Program.cs
 │   ├── Game1.cs                  # DemoGame : Core
 │   ├── DemoScene.cs
+│   ├── TitleScene.cs
+│   ├── PauseOverlay.cs
 │   └── Content/
 │
 └── HellCoffee.slnx               # Solution file
@@ -110,7 +125,7 @@ HellCoffee.Engine/
 ┌──────────────────────────────────────────────────────┐
 │                   HellCoffee.Demo                    │
 │           DemoGame (extends Core)                    │
-│           DemoScene (extends Scene)                  │
+│           TitleScene / DemoScene / PauseOverlay      │
 └──────────────────┬───────────────────────────────────┘
                    │ uses
 ┌──────────────────▼───────────────────────────────────┐
@@ -126,6 +141,8 @@ HellCoffee.Engine/
 │  Camera2D    ── CameraShake                          │
 │  AnimatedSprite ── AnimationController               │
 │  TilemapLayer   ── TileCollision                     │
+│  ParticleEmitter ── ParticleEmitterConfig            │
+│  UIPanel / UIButton / UILabel / UISlider             │
 │  RectShape / CircleShape / PixelCollision            │
 └──────────────────────────────────────────────────────┘
                    │ extends
@@ -168,9 +185,19 @@ public class DemoGame : Core
 | `Core.Audio` | `AudioManager` | Audio manager |
 | `Core.Scenes` | `SceneManager` | Scene controller |
 | `Core.Debug` | `DebugOverlay` | Debug overlay |
+| `Core.Pixel` | `Texture2D` | Shared 1×1 white pixel texture |
 | `Core.VirtualWidth/Height` | `int` | Virtual render resolution |
 
 The engine renders to a `RenderTarget2D` at the virtual resolution and scales it to the window using `PointClamp` sampling for crisp pixel art.
+
+**Coordinate conversion:**
+
+```csharp
+// Convert real screen coordinates (e.g. mouse) to virtual engine coordinates
+var virtualPos = Core.ScreenToVirtual(Core.Input.Mouse.Position.ToVector2());
+```
+
+Use `ScreenToVirtual` before passing mouse position to UI elements so they work correctly at any window size.
 
 ---
 
@@ -355,16 +382,22 @@ Core.SB.Begin(transformMatrix: camera.TransformMatrix);
 var worldPos = camera.ScreenToWorld(mousePosition);
 ```
 
-#### Parallax Backgrounds
+#### Backgrounds
 
 ```csharp
+// Parallax layers (depth-based scrolling)
 var backgrounds = new List<BackgroundLayer>
 {
     new SolidBackground(Color.DarkSlateBlue),
-    new ParallaxBackground(skyTexture,   parallaxX: 0.1f, parallaxY: 0f, repeatX: true),
+    new ParallaxBackground(skyTexture,    parallaxX: 0.1f, parallaxY: 0f, repeatX: true),
     new ParallaxBackground(cloudsTexture, parallaxX: 0.4f, parallaxY: 0f, repeatX: true),
     new ParallaxBackground(hillsTexture,  parallaxX: 0.7f, parallaxY: 0f, repeatX: true),
 };
+
+// Tiled background (infinitely repeating with optional auto-scroll)
+var tiled = new TiledBackground(region, scrollSpeed: new Vector2(20f, 0f));
+tiled.Update(gameTime, camera);
+tiled.Draw(Core.SB, camera);
 
 // In Draw():
 foreach (var bg in backgrounds)
@@ -394,6 +427,164 @@ var solidRects = layer.GetSolidTileRects(regionRect);
 
 ---
 
+### Particle System
+
+**Files:** `Graphics/Particles/ParticleEmitter.cs`, `ParticleEmitterConfig.cs`, `Particle.cs`
+
+Pool-based particle emitter with configurable emission, physics, and visual interpolation. Requires no external assets — defaults to `Core.Pixel` when no texture is set.
+
+```csharp
+// 1. Define configuration
+var config = new ParticleEmitterConfig
+{
+    MaxParticles    = 200,
+    EmissionRate    = 30f,          // particles per second (continuous mode)
+    MinLifetime     = 0.5f,
+    MaxLifetime     = 1.5f,
+    MinVelocity     = new Vector2(-40f, -100f),
+    MaxVelocity     = new Vector2( 40f,  -40f),
+    Gravity         = new Vector2(0f, 80f),
+    SpawnRadius     = 4f,           // randomize spawn within a radius
+    StartColor      = Color.Orange,
+    EndColor        = Color.Transparent,
+    StartScale      = 3f,
+    EndScale        = 0f,
+    MinRotationSpeed = -2f,
+    MaxRotationSpeed =  2f,
+    Texture         = null,         // null = single pixel
+};
+
+// 2. Create emitter
+var emitter = new ParticleEmitter(config);
+emitter.Position = playerPosition;
+
+// 3. Continuous emission
+emitter.Start();
+emitter.Stop();                     // stops spawning, existing particles finish naturally
+emitter.Stop(clearExisting: true);  // kills all particles immediately
+
+// 4. One-shot burst (works independently of Start/Stop)
+emitter.Burst(25);
+
+// 5. Update & Draw each frame
+emitter.Update(gameTime);
+emitter.Draw(Core.SB);
+
+// 6. Inspect state
+int alive = emitter.ActiveCount;
+bool running = emitter.IsEmitting;
+```
+
+**`ParticleEmitterConfig` reference:**
+
+| Property | Default | Description |
+|---|---|---|
+| `MaxParticles` | `100` | Fixed pool size (max simultaneous particles) |
+| `EmissionRate` | `20f` | Particles per second when `Start()` is active |
+| `MinLifetime` / `MaxLifetime` | `0.5` / `1.5` | Lifetime range in seconds |
+| `MinVelocity` / `MaxVelocity` | `(-30,-80)` / `(30,-20)` | Initial velocity range |
+| `Gravity` | `(0, 60)` | Constant acceleration applied every frame |
+| `SpawnOffset` | `Vector2.Zero` | Fixed offset from emitter position |
+| `SpawnRadius` | `0f` | Random scatter radius around spawn point |
+| `StartColor` / `EndColor` | `White` / `Transparent` | Color interpolated over particle lifetime |
+| `StartScale` / `EndScale` | `2f` / `0f` | Scale interpolated over particle lifetime |
+| `MinRotationSpeed` / `MaxRotationSpeed` | `-3f` / `3f` | Random spin speed (radians/sec) |
+| `Texture` | `null` | `TextureRegion` to draw; `null` uses `Core.Pixel` |
+
+---
+
+### UI System
+
+**Files:** `UI/` directory
+
+Immediate-mode style UI elements that work in virtual screen coordinates. All elements inherit from `UIElement`.
+
+> **Important:** pass mouse coordinates converted via `Core.ScreenToVirtual()` before calling `Update` on any UI element.
+
+#### UIPanel
+
+Container with a solid background that propagates updates and draws to child elements.
+
+```csharp
+var panel = new UIPanel
+{
+    Position        = new Vector2(80, 50),
+    Width           = 160,
+    Height          = 80,
+    BackgroundColor = new Color(20, 20, 30, 220),
+    BorderColor     = new Color(80, 80, 120),
+    BorderWidth     = 1,
+};
+
+panel.Add(myButton);
+panel.Add(myLabel);
+panel.Remove(myButton);
+panel.Clear();
+
+panel.Update(gameTime, mouseVirtual, mouseClicked);
+panel.Draw(Core.SB);
+```
+
+#### UILabel
+
+Text rendered with the embedded `PixelFont`.
+
+```csharp
+var label = new UILabel("SCORE: 0", position: new Vector2(10, 10), color: Color.Yellow, scale: 2);
+label.Text = $"SCORE: {score}";
+label.RefreshSize(); // recalculates Width/Height after changing Text
+label.Draw(Core.SB);
+```
+
+#### UIButton
+
+Clickable button with Normal / Hover / Pressed visual states.
+
+```csharp
+var btn = new UIButton("START", position: new Vector2(100, 80), width: 80, height: 16);
+btn.NormalColor = new Color(50, 50, 80);
+btn.HoverColor  = new Color(80, 80, 130);
+btn.PressColor  = new Color(30, 30, 50);
+btn.BorderColor = new Color(100, 100, 160);
+btn.TextColor   = Color.White;
+btn.TextScale   = 1;
+
+btn.OnClick += () => Core.Scenes.ChangeFade(new GameplayScene());
+
+btn.Update(gameTime, mouseVirtual, mouseJustClicked);
+btn.Draw(Core.SB);
+```
+
+#### UISlider
+
+Horizontal slider with an integrated label that shows the current value as a percentage.
+
+```csharp
+var slider = new UISlider("MUSIC", position: new Vector2(10, 30), width: 100, value: 0.7f);
+slider.MinValue = 0f;
+slider.MaxValue = 1f;
+slider.TrackColor  = new Color(30, 30, 50);
+slider.FillColor   = new Color(80, 80, 160);
+slider.HandleColor = Color.White;
+
+slider.OnValueChanged += v => Core.Audio.MusicVolume = v;
+
+slider.Update(gameTime, mouseVirtual, mouseJustClicked);
+slider.Draw(Core.SB);
+```
+
+**Common `UIElement` properties:**
+
+| Property | Description |
+|---|---|
+| `Position` | Top-left in virtual coordinates |
+| `Width` / `Height` | Element size in virtual pixels |
+| `Bounds` | Computed `Rectangle` from position + size |
+| `IsVisible` | Skips `Draw` when `false` |
+| `IsEnabled` | Skips `Update` (input) when `false` |
+
+---
+
 ### Collision System
 
 #### Shapes
@@ -414,14 +605,18 @@ position += sep; // push out of overlap
 
 ```csharp
 // Resolve entity against a tilemap layer
-var separation = TileCollision.Resolve(box, tilemapLayer);
+// Uses the maximum separation per axis to avoid multi-tile bounce artifacts
+var separation = TileCollision.Resolve(entityBounds, tilemapLayer);
 position += separation;
 
+// One-way platforms: only collide when approaching from above
+var sep = TileCollision.Resolve(entityBounds, tilemapLayer, oneWayFromAbove: true);
+
 // Ground / wall queries
-bool grounded    = TileCollision.IsGrounded(box, tilemapLayer);
-bool wallLeft    = TileCollision.HasWallLeft(box, tilemapLayer);
-bool wallRight   = TileCollision.HasWallRight(box, tilemapLayer);
-bool ceiling     = TileCollision.HasCeiling(box, tilemapLayer);
+bool grounded  = TileCollision.IsGrounded(box, tilemapLayer);
+bool wallLeft  = TileCollision.HasWallLeft(box, tilemapLayer);
+bool wallRight = TileCollision.HasWallRight(box, tilemapLayer);
+bool ceiling   = TileCollision.HasCeiling(box, tilemapLayer);
 ```
 
 #### Pixel-Perfect Collision
@@ -531,12 +726,20 @@ var size = PixelFont.Measure("text", scale: 1f); // Vector2
 
 `HellCoffee.Demo` is a fully working demo showcasing most engine features with **zero external assets** — all textures are generated procedurally at runtime.
 
+**Scenes:**
+- `TitleScene` — title screen with animated logo, particle effects, and a Start button
+- `DemoScene` — main gameplay scene with player movement, tilemap, and parallax background
+- `PauseOverlay` — in-game pause menu built with the UI system (music/sfx sliders, resume/quit buttons)
+
 **Features demonstrated:**
 - Player character with run/jump/idle animation state machine
 - Physics: gravity, jump force, ground clamping, landing camera shake
-- AABB collision detection and resolution
+- AABB collision detection and resolution against tilemap
+- One-way platform support
 - Smooth camera follow with configurable lag
 - Parallax background layers (sky + far + near)
+- Particle emitter on player landing and in the title screen
+- UI system: panel, labels, buttons, and sliders in the pause menu
 - Debug overlay with collision shapes and info lines
 
 **Controls:**
@@ -545,6 +748,7 @@ var size = PixelFont.Measure("text", scale: 1f); // Vector2
 |---|---|
 | Move | A / D or Arrow Keys |
 | Jump | W / Up / Space |
+| Pause | Escape |
 | Toggle Collisions | F1 |
 | Toggle FPS | F2 |
 | Toggle Tile Grid | F3 |
