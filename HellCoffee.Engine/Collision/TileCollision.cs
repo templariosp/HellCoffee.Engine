@@ -15,7 +15,10 @@ public static class TileCollision
     /// </summary>
     public static Vector2 Resolve(Rectangle entityBounds, TilemapLayer layer, bool oneWayFromAbove = false)
     {
-        var separation = Vector2.Zero;
+        // Usa o MÁXIMO de separação em cada eixo, não a soma.
+        // Somar separações de múltiplos tiles da mesma linha/coluna causaria
+        // empurrões excessivos (N tiles × overlap = bounce involuntário).
+        float maxSepX = 0f, maxSepY = 0f;
 
         foreach (var tileRect in layer.GetSolidTileRects(entityBounds))
         {
@@ -23,11 +26,7 @@ public static class TileCollision
             if (oneWayFromAbove)
             {
                 var tile = layer.GetTileAtPixel(tileRect.Center.X, tileRect.Center.Y);
-                if (tile.IsOneWay)
-                {
-                    // Só bloqueia se entidade estava acima do topo do tile
-                    if (entityBounds.Bottom - tileRect.Top > 4) continue;
-                }
+                if (tile.IsOneWay && entityBounds.Bottom - tileRect.Top > 4) continue;
             }
 
             int overlapX = entityBounds.Right < tileRect.Right
@@ -40,15 +39,17 @@ public static class TileCollision
 
             if (overlapX < overlapY)
             {
-                separation.X += entityBounds.Center.X < tileRect.Center.X ? -overlapX : overlapX;
+                float sx = entityBounds.Center.X < tileRect.Center.X ? -overlapX : overlapX;
+                if (MathF.Abs(sx) > MathF.Abs(maxSepX)) maxSepX = sx;
             }
             else
             {
-                separation.Y += entityBounds.Center.Y < tileRect.Center.Y ? -overlapY : overlapY;
+                float sy = entityBounds.Center.Y < tileRect.Center.Y ? -overlapY : overlapY;
+                if (MathF.Abs(sy) > MathF.Abs(maxSepY)) maxSepY = sy;
             }
         }
 
-        return separation;
+        return new Vector2(maxSepX, maxSepY);
     }
 
     /// <summary>Verifica se a entidade está tocando o chão (tile sólido logo abaixo).</summary>

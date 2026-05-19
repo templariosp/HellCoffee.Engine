@@ -19,6 +19,6 @@ public class DemoGame : Core
         GM.Create();
         GM.Instance.Reset();
 
-        Scenes.ChangeSceneImmediate(new DemoScene(), Content);
+        Scenes.ChangeSceneImmediate(new TitleScene(), Content);
     }
 }
